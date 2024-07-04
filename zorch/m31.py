@@ -14,6 +14,39 @@ sub = cp.ElementwiseKernel(
    'const unsigned int M31 = 2147483647; z = (x + M31 - y); z = (z & M31) + (z >> 31)',   # loop body code
    'sub')            # kernel name
 
+pow5 = cp.ElementwiseKernel(
+   'uint32 x',        # input argument list
+   'uint32 o',                 # output argument list
+   '''
+    const unsigned int M31 = 2147483647;
+
+    unsigned int z1 = (x * x);
+    unsigned int z2 = __umulhi(x, x);
+    unsigned int z = (z1 & M31) + (z1 >> 31) + z2 * 2;
+    unsigned int x2 = (z & M31) + (z >> 31);
+
+    z1 = (x * x2);
+    z2 = __umulhi(x, x2);
+    z = (z1 & M31) + (z1 >> 31) + z2 * 2;
+    unsigned int x3 = (z & M31) + (z >> 31);
+
+    z1 = (x2 * x3);
+    z2 = __umulhi(x2, x3);
+    z = (z1 & M31) + (z1 >> 31) + z2 * 2;
+    o = (z & M31) + (z >> 31);
+   ''',
+   'pow5')            # kernel name
+
+sum = cp.ReductionKernel(
+    'uint32 x',  # input params
+    'uint32 y',  # output params
+    'x',  # map
+    '(a + b) % 2147483647',  # reduce
+    'y = a',  # post-reduction map
+    '0',  # identity value
+    'sum'  # kernel name
+)
+
 mul = cp.ElementwiseKernel(
    'uint32 x, uint32 y',        # input argument list
    'uint32 z',                 # output argument list
@@ -103,6 +136,7 @@ mul_ext_kernel = cp.RawKernel(kernel_code, 'vectorized_mulmod')
 
 # Wrapper function
 def mul_ext(x, y):
+    x, y = cp.broadcast_arrays(x, y)
     assert x.shape == y.shape
     assert x.dtype == y.dtype == cp.uint32
     
