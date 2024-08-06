@@ -17,7 +17,7 @@ def test():
     assert (x + x_orig) - x_orig == x
     print("Basic arithmetic tests passed")
     x4_orig = ExtendedM31(
-        3 ** arange(4 * 10**7).reshape((10**7, 4)) % modulus
+        3 ** arange(4 * 10**7, dtype=cp.uint16).reshape((10**7, 4)) % modulus
     )
     x4 = ExtendedM31(cp.copy(x4_orig.value))
     x5 = ExtendedM31(cp.copy(x4_orig.value))
