@@ -1,14 +1,7 @@
-try:
-    import cupy
-    from .m31_utils import (
-        zeros, arange, array, append, add, sub, mul, cp as np, pow5, modinv, mul_ext,
-        modinv_ext, modulus, sum as m31_sum
-    )
-except:
-    from .m31_numpy_utils import (
-        zeros, arange, array, append, add, sub, mul, np, pow5, modinv, mul_ext,
-        modinv_ext, modulus, sum as m31_sum
-    )
+from .koalabear_numpy_utils import (
+    zeros, arange, array, append, add, sub, mul, np, pow3, modinv, mul_ext,
+    modinv_ext, modulus, sum as m31_sum
+)
 
 def mod31_py_obj(inp):
     if isinstance(inp, int):
@@ -16,11 +9,11 @@ def mod31_py_obj(inp):
     else:
         return [mod31_py_obj(x) for x in inp]
 
-class M31():
+class KoalaBear():
     def __init__(self, x):
         if isinstance(x, (int, list)):
             x = array(mod31_py_obj(x))
-        elif isinstance(x, M31):
+        elif isinstance(x, KoalaBear):
             x = x.value
         self.value = x
         assert self.value.dtype == np.uint32
@@ -46,13 +39,13 @@ class M31():
         return self.value.shape
 
     def reshape(self, shape):
-        return M31(self.value.reshape(shape))
+        return KoalaBear(self.value.reshape(shape))
 
     def swapaxes(self, ax1, ax2):
-        return M31(self.value.swapaxes(ax1, ax2))
+        return KoalaBear(self.value.swapaxes(ax1, ax2))
 
     def copy(self):
-        return M31(np.copy(self.value))
+        return KoalaBear(np.copy(self.value))
 
     @property
     def ndim(self):
@@ -61,53 +54,53 @@ class M31():
     def to_extended(self):
         o = zeros(self.value.shape + (4,))
         o[...,0] = self.value
-        return ExtendedM31(o)
+        return ExtendedKoalaBear(o)
 
     def __getitem__(self, index):
-        return M31(self.value[index])
+        return KoalaBear(self.value[index])
 
     def __setitem__(self, index, value):
         if isinstance(value, int):
             self.value[index] = value
-        elif isinstance(value, M31):
+        elif isinstance(value, KoalaBear):
             self.value[index] = value.value
         else:
             raise Exception(f"Bad input for setitem: {value}")
 
     def __add__(self, other):
-        if isinstance(other, ExtendedM31):
+        if isinstance(other, ExtendedKoalaBear):
             return self.to_extended() + other
         elif isinstance(other, int):
-            other = M31(other)
-        return M31(add(self.value, other.value))
+            other = KoalaBear(other)
+        return KoalaBear(add(self.value, other.value))
 
     def __neg__(self):
-        return M31(modulus - self.value)
+        return KoalaBear(modulus - self.value)
 
     def __sub__(self, other):
-        if isinstance(other, ExtendedM31):
+        if isinstance(other, ExtendedKoalaBear):
             return self.to_extended() - other
         elif isinstance(other, int):
-            other = M31(other)
-        return M31(sub(self.value, other.value))
+            other = KoalaBear(other)
+        return KoalaBear(sub(self.value, other.value))
 
     def __mul__(self, other):
-        if isinstance(other, ExtendedM31):
-            return ExtendedM31(mul(
+        if isinstance(other, ExtendedKoalaBear):
+            return ExtendedKoalaBear(mul(
                 self.value.reshape(self.value.shape + (1,)),
                 other.value
             ))
         elif isinstance(other, int):
-            other = M31(other)
-        return M31(mul(self.value, other.value))
+            other = KoalaBear(other)
+        return KoalaBear(mul(self.value, other.value))
 
     def __pow__(self, other):
         assert isinstance(other, int)
-        if other == 5:
+        if other == 3:
             # Optimize common special case
-            return M31(pow5(self.value))
+            return KoalaBear(pow3(self.value))
         elif other == 0:
-            return M31(np.ones(self.value.shape))
+            return KoalaBear(np.ones(self.value.shape))
         elif other == 1:
             return self
         elif other % 2 == 1:
@@ -118,11 +111,11 @@ class M31():
             return sub * sub
 
     def inv(self):
-        return M31(modinv(self.value))
+        return KoalaBear(modinv(self.value))
 
     def __truediv__(self, other):
         if isinstance(other, int):
-            other = M31(other)
+            other = KoalaBear(other)
         return self * other.inv()
 
     def __rtruediv__(self, other):
@@ -146,8 +139,8 @@ class M31():
 
     def __eq__(self, other):
         if isinstance(other, int):
-            other = M31(other)
-        elif isinstance(other, ExtendedM31):
+            other = KoalaBear(other)
+        elif isinstance(other, ExtendedKoalaBear):
             return self.to_extended() == other
         shape = np.broadcast_shapes(self.value.shape, other.value.shape)
         return np.array_equal(
@@ -155,15 +148,15 @@ class M31():
             np.broadcast_to(other.value, shape) % modulus
         )
 
-class ExtendedM31():
+class ExtendedKoalaBear():
     def __init__(self, x):
         if isinstance(x, int):
             x = array([x % modulus, 0, 0, 0])
         elif isinstance(x, list):
             x = array(mod31_py_obj(x))
-        elif isinstance(x, M31):
+        elif isinstance(x, KoalaBear):
             x = x.to_extended().value
-        elif isinstance(x, ExtendedM31):
+        elif isinstance(x, ExtendedKoalaBear):
             x = x.value
         assert x.shape[-1] == 4
         self.value = x
@@ -187,15 +180,15 @@ class ExtendedM31():
         return self.value.shape[:-1]
 
     def reshape(self, shape):
-        return ExtendedM31(self.value.reshape(shape + (4,)))
+        return ExtendedKoalaBear(self.value.reshape(shape + (4,)))
 
     def swapaxes(self, ax1, ax2):
         adjusted_ax1 = ax1 if ax1 >= 0 else ax1-1
         adjusted_ax2 = ax2 if ax2 >= 0 else ax2-1
-        return ExtendedM31(self.value.swapaxes(adjusted_ax1, adjusted_ax2))
+        return ExtendedKoalaBear(self.value.swapaxes(adjusted_ax1, adjusted_ax2))
 
     def copy(self):
-        return ExtendedM31(np.copy(self.value))
+        return ExtendedKoalaBear(np.copy(self.value))
 
     @property
     def ndim(self):
@@ -205,49 +198,49 @@ class ExtendedM31():
         return self
 
     def __getitem__(self, index):
-        return ExtendedM31(self.value[index])
+        return ExtendedKoalaBear(self.value[index])
 
     def __setitem__(self, index, value):
         if isinstance(value, int):
             self.value[index] = value
-        elif isinstance(value, M31):
+        elif isinstance(value, KoalaBear):
             self.value[index] = value.to_extended().value
-        elif isinstance(value, ExtendedM31):
+        elif isinstance(value, ExtendedKoalaBear):
             self.value[index] = value.value
         else:
             raise Exception(f"Bad input for setitem: {value}")
 
     def __add__(self, other):
-        if isinstance(other, M31):
+        if isinstance(other, KoalaBear):
             other = other.to_extended()
         elif isinstance(other, int):
-            other = ExtendedM31(other)
-        return ExtendedM31(add(self.value, other.value))
+            other = ExtendedKoalaBear(other)
+        return ExtendedKoalaBear(add(self.value, other.value))
 
     def __neg__(self):
-        return ExtendedM31(modulus - self.value)
+        return ExtendedKoalaBear(modulus - self.value)
 
     def __sub__(self, other):
-        if isinstance(other, M31):
+        if isinstance(other, KoalaBear):
             other = other.to_extended()
         elif isinstance(other, int):
-            other = ExtendedM31(other)
-        return ExtendedM31(sub(self.value, other.value))
+            other = ExtendedKoalaBear(other)
+        return ExtendedKoalaBear(sub(self.value, other.value))
 
     def __mul__(self, other):
         if isinstance(other, int):
-            other = M31(other)
-        if isinstance(other, M31):
-            return ExtendedM31(mul(
+            other = KoalaBear(other)
+        if isinstance(other, KoalaBear):
+            return ExtendedKoalaBear(mul(
                 self.value,
                 other.value.reshape(other.value.shape + (1,))
             ))
-        return ExtendedM31(mul_ext(self.value, other.value))
+        return ExtendedKoalaBear(mul_ext(self.value, other.value))
 
     def __pow__(self, other):
         assert isinstance(other, int)
         if other == 0:
-            return M31(np.ones(self.shape)).to_extended()
+            return KoalaBear(np.ones(self.shape)).to_extended()
         elif other == 1:
             return self
         elif other % 2 == 1:
@@ -258,11 +251,11 @@ class ExtendedM31():
             return sub * sub
 
     def inv(self):
-        return ExtendedM31(modinv_ext(self.value))
+        return ExtendedKoalaBear(modinv_ext(self.value))
 
     def __truediv__(self, other):
         if isinstance(other, int):
-            other = M31(other)
+            other = KoalaBear(other)
         return self * other.inv()
 
     def __rtruediv__(self, other):
@@ -283,8 +276,8 @@ class ExtendedM31():
 
     def __eq__(self, other):
         if isinstance(other, int):
-            other = M31(other)
-        if isinstance(other, M31):
+            other = KoalaBear(other)
+        if isinstance(other, KoalaBear):
             other = other.to_extended()
         shape = np.broadcast_shapes(self.value.shape, other.value.shape)
         return np.array_equal(
@@ -293,11 +286,13 @@ class ExtendedM31():
         )
 
 def matmul(a, b, assume_second_input_small=False):
-    if not isinstance(a, (M31, ExtendedM31)):
-        raise Exception("First input must be M31 or extended M31")
-    elif not isinstance(b, M31):
-        raise Exception("Second input must be M31")
-    a_value = a.value if isinstance(a, M31) else a.value.swapaxes(-2, -1)
+    if not isinstance(a, (KoalaBear, ExtendedKoalaBear)):
+        raise Exception("First input must be KoalaBear or extended KoalaBear")
+    if not isinstance(b, (KoalaBear, ExtendedKoalaBear)):
+        raise Exception("Second input must be KoalaBear or extended KoalaBear")
+    if isinstance(a, ExtendedKoalaBear) and isinstance(b, ExtendedKoalaBear):
+        raise Exception("inputs cannot both be extended")
+    a_value = a.value if isinstance(a, KoalaBear) else a.value.swapaxes(-2, -1)
     if assume_second_input_small:
         data1 = np.matmul(a_value & 65535, b.value)
         data2 = np.matmul(a_value >> 16, b.value)
@@ -308,7 +303,11 @@ def matmul(a, b, assume_second_input_small=False):
         o1 = np.matmul(data1 & 65535, data2)
         o2 = np.matmul(data1 >> 16, data2)
         o = ((o1 + ((o2 % modulus) << 16)) % modulus).astype(np.uint32)
-    if isinstance(a, M31):
-        return M31(o)
+    if isinstance(a, KoalaBear) and isinstance(b, KoalaBear):
+        return KoalaBear(o)
+    elif isinstance(a, ExtendedKoalaBear):
+        return ExtendedKoalaBear(o.swapaxes(-2, -1))
+    elif isinstance(b, ExtendedKoalaBear):
+        return ExtendedKoalaBear(o)
     else:
-        return ExtendedM31(o.swapaxes(-2, -1))
+        raise Exception("wat")

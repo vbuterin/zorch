@@ -1,4 +1,8 @@
-from .m31_utils import modulus
+try:
+    import cupy
+    from .m31_utils import modulus
+except:
+    from .m31_numpy_utils import modulus
 from .m31_field import M31
 
 class Point():
