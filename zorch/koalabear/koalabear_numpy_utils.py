@@ -19,10 +19,10 @@ def _neg(x):  return _modp(modulus - _u64(x))
 # Base-field ops (F_p)
 # ------------------------
 def add(x, y):
-    return _modp(_u64(x) + _u64(y))
+    return (x + y) % modulus
 
 def sub(x, y):
-    return _modp(_u64(x) + modulus - _u64(y))
+    return (x + modulus - y) % modulus
 
 def mul(x, y):
     return _modp(_u64(x) * _u64(y))
@@ -90,31 +90,60 @@ _ALPHA = np.array([np.uint32(_ALPHA0), np.uint32(_ALPHA1)], dtype=np.uint32)
 # Pack x as (..., 4): x0 + x1*u  +  v*(x2 + x3*u)
 # ------------------------
 def mul_ext(x, y):
+    """
+    Multiply in F_p[u][v] with u^2=3 and v^2=1+u.
+    Inputs x,y are uint32 arrays with length % 4 == 0, laid out as:
+      x = [a0, a1, b0, b1,  a0, a1, b0, b1, ...] meaning (A + v*B)
+      where A = a0 + a1*u, B = b0 + b1*u.
+    Returns same-shape uint32 array.
+    """
     x = np.asarray(x, dtype=np.uint32)
     y = np.asarray(y, dtype=np.uint32)
-    assert x.dtype == np.uint32 and y.dtype == np.uint32
-    assert x.size % 4 == 0
 
-    xy = (x.reshape(-1, 4), y.reshape(-1, 4))
-    X, Y = (xy[0], xy[1])
+    p  = np.uint64(2**31 - 2**24 + 1)  # KoalaBear modulus
+    NR = np.uint64(3)                  # u^2 = 3
 
-    A = np.stack((X[:,0], X[:,1]), axis=1)  # a0 + a1 u
-    B = np.stack((X[:,2], X[:,3]), axis=1)  # b0 + b1 u
-    C = np.stack((Y[:,0], Y[:,1]), axis=1)
-    D = np.stack((Y[:,2], Y[:,3]), axis=1)
+    X = x.reshape(-1, 4).astype(np.uint64, copy=False)
+    Y = y.reshape(-1, 4).astype(np.uint64, copy=False)
 
-    LL   = _cplx_mul(A, C)                         # A*C
-    RR   = _cplx_mul(B, D)                         # B*D
-    RR_a = _cplx_mul(RR, _ALPHA)                  # RR * alpha
-    real = _cplx_add(LL, RR_a)                     # real  = LL + RR*alpha
-    comb = _cplx_mul(_cplx_add(A, B), _cplx_add(C, D))
-    imag = _cplx_sub(comb, _cplx_add(LL, RR))      # imag  = (A+B)(C+D) - LL - RR
+    a0, a1, b0, b1 = X[:,0], X[:,1], X[:,2], X[:,3]
+    c0, c1, d0, d1 = Y[:,0], Y[:,1], Y[:,2], Y[:,3]
 
-    new_shape = np.broadcast_shapes(x.shape, y.shape)
-    Z = np.zeros(new_shape, dtype=np.uint32)
-    Z[...,0], Z[...,1] = real[...,0], real[...,1]
-    Z[...,2], Z[...,3] = imag[...,0], imag[...,1]
-    return Z.reshape(new_shape)
+    # LL = A*C in F_p[u]
+    ll_r = (a0*c0 + NR*a1*c1) % p
+    ll_i = (a0*c1 + a1*c0) % p
+
+    # RR = B*D in F_p[u]
+    rr_r = (b0*d0 + NR*b1*d1) % p
+    rr_i = (b0*d1 + b1*d0) % p
+
+    # real = LL + alpha*RR, with alpha = 1 + u
+    # alpha*RR = (rr_r + NR*rr_i) + (rr_i + rr_r)*u
+    real_r = (ll_r + rr_r + NR*rr_i) % p
+    real_i = (ll_i + rr_i + rr_r) % p
+
+    # comb = (A+B)*(C+D) in F_p[u]
+    e0 = (a0 + b0)
+    e0 -= p * (e0 >= p)
+    e1 = (a1 + b1)
+    e1 -= p * (e1 >= p)
+    f0 = (c0 + d0)
+    f0 -= p * (f0 >= p)
+    f1 = (c1 + d1)
+    f1 -= p * (f1 >= p)
+    comb_r = (e0*f0 + NR*e1*f1)
+    comb_i = (e0*f1 + e1*f0)
+
+    # imag = comb - LL - RR
+    imag_r = (comb_r + p*2 - (ll_r + rr_r)) % p
+    imag_i = (comb_i + p*2 - (ll_i + rr_i)) % p
+
+    Z = np.empty(np.broadcast_shapes(X.shape, Y.shape), dtype=np.uint32)
+    Z[:,0] = real_r.astype(np.uint32)
+    Z[:,1] = real_i.astype(np.uint32)
+    Z[:,2] = imag_r.astype(np.uint32)
+    Z[:,3] = imag_i.astype(np.uint32)
+    return Z.reshape(np.broadcast_shapes(x.shape, y.shape))
 
 def modinv_ext(x):
     x = np.asarray(x, dtype=np.uint32)
