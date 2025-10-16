@@ -7,6 +7,8 @@ modulus = 2**31 - 2**24 + 1          # p = 2,130,706,433
 _NR = np.uint64(3)                               # u^2 = 3   (in F_p)
 _ALPHA0 = np.uint64(1)                           # v^2 = ALPHA0 + ALPHA1 * u
 _ALPHA1 = np.uint64(1)
+modulus32 = np.uint32(2**31 - 2**24 + 1)          # p = 2,130,706,433
+modulus64 = np.uint64(2**31 - 2**24 + 1)          # p = 2,130,706,433
 
 # ------------------------
 # Small helpers
@@ -19,20 +21,23 @@ def _neg(x):  return _modp(modulus - _u64(x))
 # Base-field ops (F_p)
 # ------------------------
 def add(x, y):
-    return (x + y) % modulus
+    o = (x + y)
+    return o - (o >= modulus32) * modulus32
 
 def sub(x, y):
-    return (x + modulus - y) % modulus
+    o = (x + modulus32 - y)
+    return o - (o >= modulus32) * modulus32
 
 def mul(x, y):
     return _modp(_u64(x) * _u64(y))
 
 def pow3(x):
-    xx = mul(x, x)
-    return mul(xx, x)
+    x = _u64(x)
+    xx = (x * x) % modulus64
+    return ((xx * x) % modulus64).astype(np.uint32, copy=False)
 
 def sum(x, axis=0):
-    return np.uint32(np.sum(_u64(x) % modulus, axis=axis) % modulus)
+    return np.uint32(np.sum(_u64(x), axis=axis) % modulus)
 
 def modinv(x):
     xf = _modp(_u64(x))  # ensure < p
@@ -85,6 +90,13 @@ def _cplx_inv(A):
 # constant alpha = _ALPHA0 + _ALPHA1*u as a 2-vector
 _ALPHA = np.array([np.uint32(_ALPHA0), np.uint32(_ALPHA1)], dtype=np.uint32)
 
+t31m1 = np.uint64(2**31-1)
+overflow = np.uint64(2**24 - 1)
+p = 2**31 - 2**24 + 1
+
+def weakmod(x):
+    return ((x & t31m1) + overflow * (x >> 31))
+
 # ------------------------
 # Degree-4 tower ops (F_p[u][v] / (u^2=_NR, v^2=_ALPHA0 + _ALPHA1*u))
 # Pack x as (..., 4): x0 + x1*u  +  v*(x2 + x3*u)
@@ -103,19 +115,19 @@ def mul_ext(x, y):
     p  = np.uint64(2**31 - 2**24 + 1)  # KoalaBear modulus
     NR = np.uint64(3)                  # u^2 = 3
 
-    X = x.reshape(-1, 4).astype(np.uint64, copy=False)
-    Y = y.reshape(-1, 4).astype(np.uint64, copy=False)
+    X = x.astype(np.uint64, copy=False)
+    Y = y.astype(np.uint64, copy=False)
 
-    a0, a1, b0, b1 = X[:,0], X[:,1], X[:,2], X[:,3]
-    c0, c1, d0, d1 = Y[:,0], Y[:,1], Y[:,2], Y[:,3]
+    a0, a1, b0, b1 = X[...,0], X[...,1], X[...,2], X[...,3]
+    c0, c1, d0, d1 = Y[...,0], Y[...,1], Y[...,2], Y[...,3]
 
     # LL = A*C in F_p[u]
-    ll_r = (a0*c0 + NR*a1*c1) % p
-    ll_i = (a0*c1 + a1*c0) % p
+    ll_r = weakmod(a0*c0 + NR*a1*c1)
+    ll_i = weakmod(a0*c1 + a1*c0)
 
     # RR = B*D in F_p[u]
-    rr_r = (b0*d0 + NR*b1*d1) % p
-    rr_i = (b0*d1 + b1*d0) % p
+    rr_r = weakmod(b0*d0 + NR*b1*d1)
+    rr_i = weakmod(b0*d1 + b1*d0)
 
     # real = LL + alpha*RR, with alpha = 1 + u
     # alpha*RR = (rr_r + NR*rr_i) + (rr_i + rr_r)*u
@@ -135,15 +147,15 @@ def mul_ext(x, y):
     comb_i = (e0*f1 + e1*f0)
 
     # imag = comb - LL - RR
-    imag_r = (comb_r + p*2 - (ll_r + rr_r)) % p
-    imag_i = (comb_i + p*2 - (ll_i + rr_i)) % p
+    imag_r = (comb_r + (p << 26) - (ll_r + rr_r)) % p
+    imag_i = (comb_i + (p << 26) - (ll_i + rr_i)) % p
 
-    Z = np.empty(np.broadcast_shapes(X.shape, Y.shape), dtype=np.uint32)
-    Z[:,0] = real_r.astype(np.uint32)
-    Z[:,1] = real_i.astype(np.uint32)
-    Z[:,2] = imag_r.astype(np.uint32)
-    Z[:,3] = imag_i.astype(np.uint32)
-    return Z.reshape(np.broadcast_shapes(x.shape, y.shape))
+    Z = np.empty(np.broadcast_shapes(x.shape, y.shape), dtype=np.uint32)
+    Z[...,0] = real_r
+    Z[...,1] = real_i
+    Z[...,2] = imag_r
+    Z[...,3] = imag_i
+    return Z
 
 def modinv_ext(x):
     x = np.asarray(x, dtype=np.uint32)
