@@ -97,89 +97,121 @@ p = 2**31 - 2**24 + 1
 def weakmod(x):
     return ((x & t31m1) + overflow * (x >> 31))
 
-# ------------------------
-# Degree-4 tower ops (F_p[u][v] / (u^2=_NR, v^2=_ALPHA0 + _ALPHA1*u))
-# Pack x as (..., 4): x0 + x1*u  +  v*(x2 + x3*u)
-# ------------------------
 def mul_ext(x, y):
     """
-    Multiply in F_p[u][v] with u^2=3 and v^2=1+u.
-    Inputs x,y are uint32 arrays with length % 4 == 0, laid out as:
-      x = [a0, a1, b0, b1,  a0, a1, b0, b1, ...] meaning (A + v*B)
-      where A = a0 + a1*u, B = b0 + b1*u.
-    Returns same-shape uint32 array.
+    Multiply in F_p[X]/(X^4 - 3).
+    Pack as (...,4): a0 + a1*X + a2*X^2 + a3*X^3.
     """
     x = np.asarray(x, dtype=np.uint32)
     y = np.asarray(y, dtype=np.uint32)
 
-    p  = np.uint64(2**31 - 2**24 + 1)  # KoalaBear modulus
-    NR = np.uint64(3)                  # u^2 = 3
+    p  = np.uint64(2**31 - 2**24 + 1)
+    NR = np.uint64(3)  # X^4 = 3
 
     X = x.astype(np.uint64, copy=False)
     Y = y.astype(np.uint64, copy=False)
 
-    a0, a1, b0, b1 = X[...,0], X[...,1], X[...,2], X[...,3]
-    c0, c1, d0, d1 = Y[...,0], Y[...,1], Y[...,2], Y[...,3]
+    a0, a1, a2, a3 = X[...,0], X[...,1], X[...,2], X[...,3]
+    b0, b1, b2, b3 = Y[...,0], Y[...,1], Y[...,2], Y[...,3]
 
-    # LL = A*C in F_p[u]
-    ll_r = weakmod(a0*c0 + NR*a1*c1)
-    ll_i = weakmod(a0*c1 + a1*c0)
+    # 16 base-field muls
+    ab00 = a0*b0; ab01 = a0*b1; ab02 = a0*b2; ab03 = a0*b3
+    ab10 = a1*b0; ab11 = a1*b1; ab12 = a1*b2; ab13 = a1*b3
+    ab20 = a2*b0; ab21 = a2*b1; ab22 = a2*b2; ab23 = a2*b3
+    ab30 = a3*b0; ab31 = a3*b1; ab32 = a3*b2; ab33 = a3*b3
 
-    # RR = B*D in F_p[u]
-    rr_r = weakmod(b0*d0 + NR*b1*d1)
-    rr_i = weakmod(b0*d1 + b1*d0)
-
-    # real = LL + alpha*RR, with alpha = 1 + u
-    # alpha*RR = (rr_r + NR*rr_i) + (rr_i + rr_r)*u
-    real_r = (ll_r + rr_r + NR*rr_i) % p
-    real_i = (ll_i + rr_i + rr_r) % p
-
-    # comb = (A+B)*(C+D) in F_p[u]
-    e0 = (a0 + b0)
-    e0 -= p * (e0 >= p)
-    e1 = (a1 + b1)
-    e1 -= p * (e1 >= p)
-    f0 = (c0 + d0)
-    f0 -= p * (f0 >= p)
-    f1 = (c1 + d1)
-    f1 -= p * (f1 >= p)
-    comb_r = (e0*f0 + NR*e1*f1)
-    comb_i = (e0*f1 + e1*f0)
-
-    # imag = comb - LL - RR
-    imag_r = (comb_r + (p << 26) - (ll_r + rr_r)) % p
-    imag_i = (comb_i + (p << 26) - (ll_i + rr_i)) % p
+    z0 = ab00 + NR*weakmod(ab13 + ab22 + ab31)
+    z1 = ab01 + ab10 + NR*weakmod(ab23 + ab32)
+    z2 = ab02 + ab11 + ab20 + NR*weakmod(ab33)
+    z3 = ab03 + ab12 + ab21 + ab30
 
     Z = np.empty(np.broadcast_shapes(x.shape, y.shape), dtype=np.uint32)
-    Z[...,0] = real_r
-    Z[...,1] = real_i
-    Z[...,2] = imag_r
-    Z[...,3] = imag_i
+    Z[...,0] = (z0 % p)
+    Z[...,1] = (z1 % p)
+    Z[...,2] = (z2 % p)
+    Z[...,3] = (z3 % p)
     return Z
 
 def modinv_ext(x):
+    """
+    Inverse in F_p[X]/(X^4 - 3), packed as (...,4).
+    Returns zeros where input is zero (no division-by-zero check).
+    """
     x = np.asarray(x, dtype=np.uint32)
     assert x.dtype == np.uint32 and x.size % 4 == 0
 
-    shp = x.shape
-    X = x.reshape(-1, 4)
+    p  = np.uint64(2**31 - 2**24 + 1)
+    NR = np.uint64(3)  # Y^2 = 3 where Y = X^2
 
-    A = np.stack((X[:,0], X[:,1]), axis=1)  # a0 + a1 u
-    B = np.stack((X[:,2], X[:,3]), axis=1)  # b0 + b1 u
+    X = x.reshape(-1, 4).astype(np.uint64, copy=False)
+    a0, a1, a2, a3 = X[:,0], X[:,1], X[:,2], X[:,3]
 
-    A2   = _cplx_square(A)
-    B2   = _cplx_square(B)
-    aB2  = _cplx_mul(B2, _ALPHA)           # alpha * B^2
-    denom = _cplx_sub(A2, aB2)             # A^2 - alpha*B^2   (in F_p[u])
-    inv_d = _cplx_inv(denom)               # (in F_p[u])
+    # K helpers: K = F_p[Y]/(Y^2=3)
+    def k_add(r1, i1, r2, i2):
+        srr = r1 + r2
+        sii = i1 + i2
+        srr -= p * (srr >= p)
+        sii -= p * (sii >= p)
+        return srr, sii
 
-    real = _cplx_mul(A, inv_d)             # (A) * inv_d
-    imag = _cplx_mul(_cplx_neg(B), inv_d)  # (-B) * inv_d
+    def k_sub(r1, i1, r2, i2):
+        drr = r1 + p - r2
+        dii = i1 + p - i2
+        drr -= p * (drr >= p)
+        dii -= p * (dii >= p)
+        return drr, dii
 
-    Z = np.empty_like(X)
-    Z[:,0], Z[:,1] = real[:,0], real[:,1]
-    Z[:,2], Z[:,3] = imag[:,0], imag[:,1]
-    return Z.reshape(shp)
+    def k_mul(r1, i1, r2, i2):
+        rr = (r1*r2 + NR*i1*i2) % p
+        ii = (r1*i2 + i1*r2) % p
+        return rr, ii
+
+    def k_sqr(r, i):
+        # (r + iY)^2 = (r^2 + 3 i^2) + (2 r i) Y
+        rr = (r*r + NR*i*i) % p
+        ii = ((r << 1) * i) % p
+        return rr, ii
+
+    def k_mulY(rr, ii):
+        return (NR*ii) % p, rr
+
+    def inv_fp(z):
+        return modinv(z)
+
+    def k_inv(r, i):
+        # (r + iY)^{-1} = (r - iY) / (r^2 - 3 i^2)
+        denom = weakmod(r*r + p - (NR * (i*i) % p))
+        denom_inv = inv_fp(denom)
+        cr = (r * denom_inv) % p
+        ci = ((p - i) * denom_inv) % p
+        return cr.astype(np.uint64), ci.astype(np.uint64)
+
+    # Build A = a0 + a2 Y ; B = a1 + a3 Y  in K
+    Ar, Ai = a0, a2
+    Br, Bi = a1, a3
+
+    # denom = A^2 - Y*B^2  in K
+    A2_r, A2_i = k_sqr(Ar, Ai)
+    B2_r, B2_i = k_sqr(Br, Bi)
+    YB2_r, YB2_i = k_mulY(B2_r, B2_i)
+    denom_r, denom_i = k_sub(A2_r, A2_i, YB2_r, YB2_i)
+
+    invd_r, invd_i = k_inv(denom_r, denom_i)
+
+    # (A - X B) * inv_d  in the outer quadratic
+    # real = A * inv_d
+    real_r, real_i = k_mul(Ar, Ai, invd_r, invd_i)
+    # imag = (-B) * inv_d
+    nBr = (p - Br) % p
+    nBi = (p - Bi) % p
+    imag_r, imag_i = k_mul(nBr, nBi, invd_r, invd_i)
+
+    Z = np.empty_like(X, dtype=np.uint32)
+    Z[:,0] = (real_r % p).astype(np.uint32)
+    Z[:,2] = (real_i % p).astype(np.uint32)
+    Z[:,1] = (imag_r % p).astype(np.uint32)
+    Z[:,3] = (imag_i % p).astype(np.uint32)
+    return Z.reshape(x.shape)
 
 # ------------------------
 # Convenience wrappers (match the original API surface)
